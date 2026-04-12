@@ -2,6 +2,8 @@
 const express = require("express");
 const app = express();
 
+
+require('./deploy-commands');
 // ✅ REQUIRED FOR FIVEM
 app.get("/api/commands", (req, res) => {
     res.json({ commands: [] });
