@@ -1,6 +1,5 @@
-
-
-app.use(express.json());
+const express = require("express");
+const app = express();
 
 // ✅ REQUIRED FOR FIVEM
 app.get("/api/commands", (req, res) => {
