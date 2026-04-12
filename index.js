@@ -5,18 +5,19 @@ const axios = require("axios");
 require("dotenv").config();
 
 const { Client, GatewayIntentBits } = require("discord.js");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 app.use(express.json());
 
 // ======================
-// QUEUES / STORAGE
+// STORAGE
 // ======================
 let commandsQueue = [];
 let resultsMap = {};
 
 // ======================
-// LOG ALL REQUESTS (DEBUG)
+// DEBUG LOGS
 // ======================
 app.use((req, res, next) => {
     console.log(`➡️ ${req.method} ${req.url}`);
@@ -24,7 +25,7 @@ app.use((req, res, next) => {
 });
 
 // ======================
-// DISCORD -> API (SEND COMMAND)
+// RECEIVE COMMAND FROM DISCORD
 // ======================
 app.post("/api/commands", (req, res) => {
     const command = req.body;
@@ -36,12 +37,11 @@ app.post("/api/commands", (req, res) => {
     commandsQueue.push(command);
 
     console.log("📩 Commande reçue:", command.type);
-
     res.json({ success: true });
 });
 
 // ======================
-// FIVEM -> GET COMMANDS
+// FIVEM POLL COMMANDS
 // ======================
 app.get("/api/commands", (req, res) => {
     const secret = req.headers["x-api-secret"];
@@ -51,17 +51,13 @@ app.get("/api/commands", (req, res) => {
     }
 
     res.json({ commands: commandsQueue });
-
     commandsQueue = [];
 });
 
 // ======================
-// RESULT RECEIVER (FIVEM -> DISCORD)
+// RECEIVE RESULT FROM FIVEM
 // ======================
 app.post("/api/command-result", (req, res) => {
-    console.log("📩 COMMAND RESULT RECEIVED");
-    console.log(req.body);
-
     const { commandId, ok, message } = req.body;
 
     if (!commandId) {
@@ -74,41 +70,46 @@ app.post("/api/command-result", (req, res) => {
         time: Date.now()
     };
 
-    res.status(200).json({ success: true });
+    console.log("✅ Résultat reçu:", req.body);
+
+    res.json({ success: true });
 });
 
 // ======================
-// DISCORD POLL RESULT
+// DISCORD GET RESULT
 // ======================
 app.get("/api/command-result/:id", (req, res) => {
-    const id = req.params.id;
-
-    const result = resultsMap[id];
+    const result = resultsMap[req.params.id];
 
     if (!result) {
         return res.json({ pending: true });
     }
 
-    delete resultsMap[id];
+    delete resultsMap[req.params.id];
 
     res.json(result);
 });
 
 // ======================
-// LOG ROUTES
+// ALL FIVEM LOG ROUTES
 // ======================
 app.post("/api/notify", (req, res) => {
-    console.log("notify:", req.body);
+    console.log("📢 notify:", JSON.stringify(req.body));
     res.sendStatus(200);
 });
 
 app.post("/api/players", (req, res) => {
-    console.log("players:", req.body);
+    console.log("👥 players:", JSON.stringify(req.body));
     res.sendStatus(200);
 });
 
 app.post("/api/staff-stats", (req, res) => {
-    console.log("staff-stats:", req.body);
+    console.log("📊 staff-stats:", JSON.stringify(req.body));
+    res.sendStatus(200);
+});
+
+app.post("/api/ranks", (req, res) => {
+    console.log("🏷️ ranks:", JSON.stringify(req.body));
     res.sendStatus(200);
 });
 
@@ -118,7 +119,7 @@ app.post("/api/staff-stats", (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-    console.log("API started on port " + PORT);
+    console.log("✅ API started on port " + PORT);
 });
 
 // ======================
@@ -131,10 +132,8 @@ const client = new Client({
 const API_URL = process.env.API_URL;
 const API_SECRET = process.env.API_SECRET;
 
-const { v4: uuidv4 } = require("uuid");
-
 // ======================
-// SEND COMMAND (WITH RESULT WAIT)
+// SEND COMMAND
 // ======================
 async function sendCommand(type, data, interaction) {
     try {
@@ -147,6 +146,8 @@ async function sendCommand(type, data, interaction) {
             executorId: interaction.user.id,
             data
         };
+
+        console.log("➡️ SEND COMMAND:", payload);
 
         await axios.post(`${API_URL}/commands`, payload, {
             headers: {
@@ -168,20 +169,20 @@ async function sendCommand(type, data, interaction) {
         }
 
         if (!result) {
-            await interaction.editReply("⚠️ Commande envoyée mais aucune réponse du serveur");
+            await interaction.editReply("⚠️ Commande envoyée, pas de réponse FiveM");
             return true;
         }
 
         await interaction.editReply(
             result.ok
-                ? `✅ Succès: ${result.message}`
-                : `❌ Erreur: ${result.message}`
+                ? `✅ ${result.message}`
+                : `❌ ${result.message}`
         );
 
         return result.ok;
 
     } catch (err) {
-        console.error("SEND ERROR:", err.message);
+        console.error("❌ SEND ERROR:", err.response?.data || err.message);
         return false;
     }
 }
@@ -199,107 +200,82 @@ client.once("ready", () => {
 client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
-    await interaction.deferReply({ ephemeral: true });
-
-    let ok = false;
-
-    switch (interaction.commandName) {
-
-        case "kick":
-            ok = await sendCommand("kick", {
-                playerId: interaction.options.getInteger("playerid"),
-                reason: interaction.options.getString("reason")
-            }, interaction);
-            break;
-
-        case "ban":
-            ok = await sendCommand("ban", {
-                playerId: interaction.options.getInteger("playerid"),
-                days: interaction.options.getInteger("days"),
-                reason: interaction.options.getString("reason")
-            }, interaction);
-            break;
-
-        case "announce":
-            ok = await sendCommand("announce", {
-                message: interaction.options.getString("message")
-            }, interaction);
-            break;
-
-        case "giveitem":
-            ok = await sendCommand("give_item", {
-                playerId: interaction.options.getInteger("playerid"),
-                item: interaction.options.getString("item"),
-                quantity: interaction.options.getInteger("quantity")
-            }, interaction);
-            break;
-
-        case "givevehicle":
-            ok = await sendCommand("give_vehicle", {
-                playerId: interaction.options.getInteger("playerid"),
-                model: interaction.options.getString("model")
-            }, interaction);
-            break;
-
-        case "teleport":
-            ok = await sendCommand("teleport", {
-                playerId: interaction.options.getInteger("playerid"),
-                x: interaction.options.getNumber("x"),
-                y: interaction.options.getNumber("y"),
-                z: interaction.options.getNumber("z")
-            }, interaction);
-            break;
-
-        case "weather":
-            ok = await sendCommand("weather", {
-                type: interaction.options.getString("type")
-            }, interaction);
-            break;
-
-        case "time":
-            ok = await sendCommand("time", {
-                hour: interaction.options.getInteger("hour"),
-                minute: interaction.options.getInteger("minute")
-            }, interaction);
-            break;
-
-        case "revive":
-            ok = await sendCommand("revive", {
-                playerId: interaction.options.getInteger("playerid")
-            }, interaction);
-            break;
-
-        case "jail":
-            ok = await sendCommand("jail", {
-                playerId: interaction.options.getInteger("playerid"),
-                minutes: interaction.options.getInteger("minutes"),
-                reason: interaction.options.getString("reason")
-            }, interaction);
-            break;
-
-        case "unjail":
-            ok = await sendCommand("unjail", {
-                playerId: interaction.options.getInteger("playerid")
-            }, interaction);
-            break;
-
-        case "warn":
-            ok = await sendCommand("warn", {
-                playerId: interaction.options.getInteger("playerid"),
-                reason: interaction.options.getString("reason")
-            }, interaction);
-            break;
-
-        case "wipe":
-            ok = await sendCommand("wipe", {
-                playerId: interaction.options.getInteger("playerid")
-            }, interaction);
-            break;
+    try {
+        await interaction.deferReply({ flags: 64 });
+    } catch (e) {
+        console.log("Interaction expirée:", e.message);
+        return;
     }
 
-    await interaction.editReply(
-        ok ? "✅ Commande envoyée au serveur FiveM" : "❌ Erreur envoi commande"
-    );
+    let ok = false;
+    const cmd = interaction.commandName;
+    const opt = interaction.options;
+
+    const commandMap = {
+        kick: ["kick", {
+            playerId: opt.getInteger("playerid"),
+            reason: opt.getString("reason")
+        }],
+        ban: ["ban", {
+            playerId: opt.getInteger("playerid"),
+            durationDays: opt.getInteger("days"),
+            reason: opt.getString("reason")
+        }],
+        announce: ["announce", {
+            message: opt.getString("message")
+        }],
+        giveitem: ["give_item", {
+            playerId: opt.getInteger("playerid"),
+            item: opt.getString("item"),
+            quantity: opt.getInteger("quantity")
+        }],
+        givevehicle: ["give_vehicle", {
+            playerId: opt.getInteger("playerid"),
+            model: opt.getString("model")
+        }],
+        teleport: ["teleport", {
+            playerId: opt.getInteger("playerid"),
+            coords: {
+                x: opt.getNumber("x"),
+                y: opt.getNumber("y"),
+                z: opt.getNumber("z")
+            }
+        }],
+        weather: ["weather", {
+            weather: opt.getString("type")
+        }],
+        time: ["time", {
+            hour: opt.getInteger("hour"),
+            minute: opt.getInteger("minute")
+        }],
+        revive: ["revive", {
+            playerId: opt.getInteger("playerid")
+        }],
+        jail: ["jail", {
+            playerId: opt.getInteger("playerid"),
+            minutes: opt.getInteger("minutes"),
+            reason: opt.getString("reason")
+        }],
+        unjail: ["unjail", {
+            playerId: opt.getInteger("playerid")
+        }],
+        warn: ["warn", {
+            playerId: opt.getInteger("playerid"),
+            reason: opt.getString("reason")
+        }],
+        wipe: ["wipe", {
+            playerId: opt.getInteger("playerid")
+        }]
+    };
+
+    if (commandMap[cmd]) {
+        const [type, data] = commandMap[cmd];
+        ok = await sendCommand(type, data, interaction);
+    }
+
+    if (!ok) {
+        await interaction.editReply("❌ Erreur envoi commande");
+    }
 });
 
 // ======================
