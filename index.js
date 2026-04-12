@@ -1,6 +1,4 @@
 const express = require("express");
-const app = express();
-
 const axios = require("axios");
 require("dotenv").config();
 
@@ -9,6 +7,7 @@ const { Client, GatewayIntentBits } = require("discord.js");
 // ======================
 // EXPRESS API
 // ======================
+const app = express();
 app.use(express.json());
 
 app.get("/api/commands", (req, res) => {
@@ -26,10 +25,9 @@ app.post("/api/players", (req, res) => {
 });
 
 // ======================
-// SERVER START
+// START SERVER (RENDER FIX)
 // ======================
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
     console.log("API started on port " + PORT);
 });
@@ -41,11 +39,12 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
+// 🔥 IMPORTANT ENV
 const API_URL = process.env.API_URL;
 const API_SECRET = process.env.API_SECRET;
 
 // ======================
-// SEND TO FIVEM
+// SEND COMMAND TO FIVEM
 // ======================
 async function sendCommand(type, data, interaction) {
     try {
@@ -70,12 +69,12 @@ async function sendCommand(type, data, interaction) {
 // ======================
 // READY
 // ======================
-client.on("ready", () => {
+client.once("ready", () => {
     console.log(`✅ Bot connecté: ${client.user.tag}`);
 });
 
 // ======================
-// COMMANDS
+// SLASH COMMANDS
 // ======================
 client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
@@ -184,6 +183,6 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ======================
-// LOGIN
+// LOGIN BOT
 // ======================
 client.login(process.env.TOKEN);
