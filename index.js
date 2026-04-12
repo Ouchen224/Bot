@@ -1,4 +1,3 @@
-
 require("./deploy-commands");
 
 const express = require("express");
@@ -13,10 +12,45 @@ const { Client, GatewayIntentBits } = require("discord.js");
 const app = express();
 app.use(express.json());
 
-app.get("/api/commands", (req, res) => {
-    res.json({ status: "ok" });
+// 🔥 QUEUE COMMANDES (IMPORTANT)
+let commandsQueue = [];
+
+// ======================
+// DISCORD -> API (RECEVOIR COMMANDES)
+// ======================
+app.post("/api/commands", (req, res) => {
+    const command = req.body;
+
+    if (!command || !command.type) {
+        return res.status(400).json({ error: "Invalid command" });
+    }
+
+    commandsQueue.push(command);
+
+    console.log("📩 Commande reçue:", command.type);
+
+    res.json({ success: true });
 });
 
+// ======================
+// FIVEM -> API (POLL COMMANDES)
+// ======================
+app.get("/api/commands", (req, res) => {
+    const secret = req.headers["x-api-secret"];
+
+    if (secret !== process.env.API_SECRET) {
+        return res.status(403).json({ error: "Forbidden" });
+    }
+
+    res.json({ commands: commandsQueue });
+
+    // vide la queue après lecture
+    commandsQueue = [];
+});
+
+// ======================
+// AUTRES ROUTES (LOGS)
+// ======================
 app.post("/api/notify", (req, res) => {
     console.log("notify:", req.body);
     res.sendStatus(200);
@@ -28,9 +62,10 @@ app.post("/api/players", (req, res) => {
 });
 
 // ======================
-// START SERVER (RENDER FIX)
+// START SERVER
 // ======================
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
     console.log("API started on port " + PORT);
 });
@@ -42,12 +77,11 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds]
 });
 
-// 🔥 IMPORTANT ENV
 const API_URL = process.env.API_URL;
 const API_SECRET = process.env.API_SECRET;
 
 // ======================
-// SEND COMMAND TO FIVEM
+// SEND COMMAND
 // ======================
 async function sendCommand(type, data, interaction) {
     try {
@@ -77,7 +111,7 @@ client.once("ready", () => {
 });
 
 // ======================
-// SLASH COMMANDS
+// COMMANDES
 // ======================
 client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
@@ -186,6 +220,6 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ======================
-// LOGIN BOT
+// LOGIN
 // ======================
 client.login(process.env.TOKEN);
