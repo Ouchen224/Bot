@@ -6,17 +6,25 @@ require("dotenv").config();
 
 const { Client, GatewayIntentBits } = require("discord.js");
 
-// ======================
-// EXPRESS API
-// ======================
 const app = express();
 app.use(express.json());
 
-// 🔥 QUEUE COMMANDES (IMPORTANT)
+// ======================
+// QUEUES / STORAGE
+// ======================
 let commandsQueue = [];
+let resultsMap = {};
 
 // ======================
-// DISCORD -> API (RECEVOIR COMMANDES)
+// LOG ALL REQUESTS (DEBUG)
+// ======================
+app.use((req, res, next) => {
+    console.log(`➡️ ${req.method} ${req.url}`);
+    next();
+});
+
+// ======================
+// DISCORD -> API (SEND COMMAND)
 // ======================
 app.post("/api/commands", (req, res) => {
     const command = req.body;
@@ -33,7 +41,7 @@ app.post("/api/commands", (req, res) => {
 });
 
 // ======================
-// FIVEM -> API (POLL COMMANDES)
+// FIVEM -> GET COMMANDS
 // ======================
 app.get("/api/commands", (req, res) => {
     const secret = req.headers["x-api-secret"];
@@ -44,12 +52,50 @@ app.get("/api/commands", (req, res) => {
 
     res.json({ commands: commandsQueue });
 
-    // vide la queue après lecture
     commandsQueue = [];
 });
 
 // ======================
-// AUTRES ROUTES (LOGS)
+// RESULT RECEIVER (FIVEM -> DISCORD)
+// ======================
+app.post("/api/command-result", (req, res) => {
+    console.log("📩 COMMAND RESULT RECEIVED");
+    console.log(req.body);
+
+    const { commandId, ok, message } = req.body;
+
+    if (!commandId) {
+        return res.status(400).json({ error: "Missing commandId" });
+    }
+
+    resultsMap[commandId] = {
+        ok: !!ok,
+        message: message || "No message",
+        time: Date.now()
+    };
+
+    res.status(200).json({ success: true });
+});
+
+// ======================
+// DISCORD POLL RESULT
+// ======================
+app.get("/api/command-result/:id", (req, res) => {
+    const id = req.params.id;
+
+    const result = resultsMap[id];
+
+    if (!result) {
+        return res.json({ pending: true });
+    }
+
+    delete resultsMap[id];
+
+    res.json(result);
+});
+
+// ======================
+// LOG ROUTES
 // ======================
 app.post("/api/notify", (req, res) => {
     console.log("notify:", req.body);
@@ -58,6 +104,11 @@ app.post("/api/notify", (req, res) => {
 
 app.post("/api/players", (req, res) => {
     console.log("players:", req.body);
+    res.sendStatus(200);
+});
+
+app.post("/api/staff-stats", (req, res) => {
+    console.log("staff-stats:", req.body);
     res.sendStatus(200);
 });
 
@@ -80,23 +131,55 @@ const client = new Client({
 const API_URL = process.env.API_URL;
 const API_SECRET = process.env.API_SECRET;
 
+const { v4: uuidv4 } = require("uuid");
+
 // ======================
-// SEND COMMAND
+// SEND COMMAND (WITH RESULT WAIT)
 // ======================
 async function sendCommand(type, data, interaction) {
     try {
-        await axios.post(`${API_URL}/commands`, {
+        const commandId = uuidv4();
+
+        const payload = {
+            commandId,
             type,
             executor: interaction.user.username,
             executorId: interaction.user.id,
             data
-        }, {
+        };
+
+        await axios.post(`${API_URL}/commands`, payload, {
             headers: {
                 "x-api-secret": API_SECRET
             }
         });
 
-        return true;
+        let result = null;
+
+        for (let i = 0; i < 10; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+
+            const res = await axios.get(`${API_URL}/command-result/${commandId}`);
+
+            if (!res.data.pending) {
+                result = res.data;
+                break;
+            }
+        }
+
+        if (!result) {
+            await interaction.editReply("⚠️ Commande envoyée mais aucune réponse du serveur");
+            return true;
+        }
+
+        await interaction.editReply(
+            result.ok
+                ? `✅ Succès: ${result.message}`
+                : `❌ Erreur: ${result.message}`
+        );
+
+        return result.ok;
+
     } catch (err) {
         console.error("SEND ERROR:", err.message);
         return false;
@@ -111,7 +194,7 @@ client.once("ready", () => {
 });
 
 // ======================
-// COMMANDES
+// COMMAND HANDLER
 // ======================
 client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
