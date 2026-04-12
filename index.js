@@ -208,4 +208,4 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.editReply(ok ? "✅ Commande envoyée au serveur FiveM" : "❌ Erreur envoi commande");
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.TOKEN);
